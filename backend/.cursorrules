@@ -1,0 +1,279 @@
+# SignSense AI — Cursor Rules
+# ============================================================
+# Paste this as your Cursor system prompt, or save as .cursorrules
+# in the root of the project. Read this fully before writing any code.
+# ============================================================
+
+## Project Overview
+
+**SignSense AI** is a real-time ASL (American Sign Language) interpreter built for the
+WeMakeDevs "Vision Possible: Agent Protocol" Hackathon (Feb 23 – Mar 1, 2026).
+
+It uses the **Vision Agents SDK by Stream** (github.com/GetStream/Vision-Agents) to
+build a multi-modal AI agent that:
+1. Watches a user's webcam via WebRTC
+2. Detects ASL hand gestures using Roboflow
+3. Converts gesture sequences into fluent English sentences using Gemini
+4. Speaks the output using ElevenLabs TTS in real-time
+
+**Team:** 2 developers. Backend: Python (FastAPI + Vision Agents). Frontend: React.
+
+---
+
+## Communication Architecture
+
+There are TWO separate communication channels:
+
+### Channel 1 — FastAPI (Control Plane)
+Handles coordination between frontend and backend:
+- `POST /api/calls/create` → Mint Stream auth tokens so frontend can join a call
+- `POST /api/calls/{id}/start-agent` → Launch Vision Agent as asyncio background task
+- `GET  /api/calls/{id}/events` → Server-Sent Events stream (gesture + transcript events)
+- `DELETE /api/calls/{id}/stop-agent` → Cancel agent task
+- `GET /api/calls/{id}/status` → Check agent health
+
+### Channel 2 — Stream WebRTC (Data Plane)
+Handles all video/audio. The frontend joins a Stream call directly using the Stream
+Video React SDK. The backend Vision Agent ALSO joins the same call. They share the
+same "room" on Stream's edge network. FastAPI does NOT proxy any video or audio.
+
+### SSE Event Flow
+```
+ASLGestureProcessor detects gesture
+  → calls on_gesture callback (set in routes/calls.py)
+    → puts event in asyncio.Queue
+      → SSE generator in /events endpoint yields it
+        → React frontend receives it via EventSource
+```
+
+---
+
+## File Structure
+
+```
+backend/
+├── main.py              # FastAPI app, CORS, router registration, lifespan
+├── config.py            # Settings loaded from .env (no pydantic-settings needed)
+├── agent.py             # Vision Agent definition (create_agent + run_agent)
+├── asl_processor.py     # Custom VideoProcessor: Roboflow inference + debounce
+├── gesture_buffer.py    # Gesture dedup, rolling window, sentence grouping
+├── instructions.md      # LLM system prompt for ASL → English conversion
+├── routes/
+│   ├── __init__.py
+│   └── calls.py         # All /api/calls/** endpoints + SSE
+├── models/
+│   ├── __init__.py
+│   └── schemas.py       # Pydantic request/response models
+├── pyproject.toml       # uv project config
+├── .env.example         # Template — never commit .env
+└── .gitignore
+```
+
+---
+
+## Tech Stack
+
+| Layer | Technology | Version / Notes |
+|-------|-----------|-----------------|
+| Runtime | Python | 3.12 required |
+| Package manager | uv | `uv add`, `uv run` |
+| Web framework | FastAPI | Latest |
+| ASGI server | uvicorn | With `[standard]` extras |
+| Vision SDK | vision-agents | `[getstream,gemini,elevenlabs,deepgram]` |
+| Gesture detection | Roboflow inference-sdk | Hosted API, no GPU needed |
+| LLM | Gemini 2.0 Flash-Lite | via vision_agents.plugins.gemini |
+| TTS | ElevenLabs | via vision_agents.plugins.elevenlabs |
+| STT | Deepgram | via vision_agents.plugins.deepgram |
+| Video transport | Stream WebRTC | via vision_agents.plugins.getstream |
+| SSE | sse-starlette | For real-time frontend events |
+| Validation | Pydantic v2 | For request/response schemas |
+
+---
+
+## Environment Variables
+
+All loaded from `.env` via `load_dotenv()` in `main.py`. Never hardcode keys.
+
+```
+STREAM_API_KEY          # Stream dashboard → your app → API Keys
+STREAM_API_SECRET       # Same location
+GOOGLE_API_KEY          # Google AI Studio → aistudio.google.com/app/apikey
+ELEVENLABS_API_KEY      # ElevenLabs → Profile → API Keys
+DEEPGRAM_API_KEY        # Deepgram console → API Keys
+ROBOFLOW_API_KEY        # Roboflow → Settings → API Keys
+ROBOFLOW_MODEL_ID       # e.g. "asl-hand-gesture-recognition/1"
+FRONTEND_URL            # e.g. "http://localhost:3000" (for CORS)
+GESTURE_CONFIDENCE_THRESHOLD  # 0.65 recommended
+```
+
+---
+
+## Coding Standards
+
+Follow these exactly when writing or modifying any code in this project:
+
+### Python
+- **Python 3.12+** — use modern syntax: `list[str]`, `dict[str, int]`, `X | None`, `match`
+- **Async-first** — all I/O must be `async def`. Use `asyncio` not threading.
+- **Type hints everywhere** — every function parameter and return type must be annotated
+- **Docstrings on every class and public method** — explain WHAT, not HOW
+- **Never use `os.environ[]` directly** — always go through `config.settings`
+- **No bare `except:`** — always catch specific exceptions or at minimum `Exception as e`
+- **f-strings only** — no `.format()` or `%` string formatting
+- **Constants in UPPER_SNAKE_CASE**, classes in `PascalCase`, functions/vars in `snake_case`
+
+### FastAPI
+- Use `APIRouter` for all routes — never add routes directly to `app` (except `/health`)
+- Use Pydantic models for all request bodies and responses
+- Always return typed `response_model` on endpoints
+- Use `BackgroundTasks` for fire-and-forget (the agent launch)
+- Use `HTTPException` with meaningful status codes and detail messages
+- Add a docstring to every endpoint function — it appears in the auto-generated docs
+
+### Vision Agents SDK
+- The `Agent` class is the entrypoint — configure it in `agent.py`, not inline
+- Processors receive frames via `async def process(self, frame, **kwargs) -> dict | None`
+- Return a dict from processors to inject context into the LLM prompt
+- Return `None` from processors to skip the frame (no LLM call triggered)
+- The `instructions.md` file is loaded by the SDK when referenced as `"Read @instructions.md"`
+- Always use `gemini.LLM()` for non-realtime and `gemini.Realtime()` for true WebRTC realtime
+
+### Error Handling
+- Roboflow API errors → log with `print(f"[ASLProcessor] error: {e}")`, return `None` (don't crash)
+- Agent task errors → log clearly, re-raise so the task marks itself as failed
+- SSE queue full → silently drop events (`QueueFull` → `pass`), never block
+- Missing env vars → raise `HTTPException(500, ...)` with a helpful message on first API call
+
+---
+
+## Key Implementation Notes
+
+### The Gesture Debounce Problem
+ASL signers hold gestures for 0.3–1 second. Without debounce, the same sign floods
+the buffer 10x per second. `GestureBuffer.add()` returns `False` for duplicates within
+`debounce_seconds`. Only `True` means "new gesture, tell the LLM."
+
+### The LLM Trigger Problem
+Vision Agents' realtime models require an audio/text event to trigger a response —
+video alone won't do it. The processor's returned dict is injected as context into the
+next LLM message. This is why the dict includes `"llm_hint"` — it acts as the trigger.
+
+### ASL ≠ English Grammar
+Never assume 1:1 sign-to-word mapping. ASL uses topic-comment structure, omits articles
+and copulas, and has different word order. The LLM instructions.md handles this conversion.
+Do not hardcode any word mapping in Python — leave it entirely to the LLM.
+
+### Stream Auth Tokens
+The frontend needs TWO things to join a Stream call:
+1. The `api_key` (public — safe to expose)
+2. A `token` (JWT signed with your `api_secret` — generate server-side via `StreamChat.create_token()`)
+The `call_id` can be any unique string. Prefix it (e.g., `signsense-abc123`) to namespace it.
+
+### SSE vs WebSocket
+We use SSE (one-way: server → client) not WebSocket (two-way). This is correct because:
+- Events only flow FROM the agent TO the frontend (gesture labels, transcripts)
+- The frontend sends nothing back via this channel (it uses Stream WebRTC for audio)
+- SSE is simpler, works through proxies, and auto-reconnects in browsers
+
+---
+
+## Common Tasks — How to Do Them
+
+### Add a new API endpoint
+1. Add Pydantic schema to `models/schemas.py`
+2. Add endpoint function to `routes/calls.py`
+3. Export schema from `models/__init__.py` if needed
+4. No changes to `main.py` needed (router is already registered)
+
+### Change the LLM
+Swap in `agent.py` — one line:
+```python
+llm=openai.Realtime(fps=3)   # OpenAI Realtime
+llm=gemini.Realtime(fps=3)   # Gemini Realtime (WebRTC direct)
+llm=gemini.LLM("gemini-2.0-flash-lite")  # Gemini standard (current default)
+```
+
+### Change the TTS voice
+In `agent.py`, pass a `voice_id` to ElevenLabs:
+```python
+tts=elevenlabs.TTS(voice_id="your_voice_id")
+```
+Find voice IDs at elevenlabs.io/voice-library.
+
+### Change confidence threshold
+Either update `.env` → `GESTURE_CONFIDENCE_THRESHOLD=0.7`,
+or pass directly: `ASLGestureProcessor(confidence_threshold=0.7)`.
+
+### Run the backend
+```bash
+cd backend
+uv run uvicorn main:app --reload --port 8000
+```
+
+### Check the API docs
+Visit `http://localhost:8000/docs` — FastAPI auto-generates Swagger UI.
+
+---
+
+## What NOT to Do
+
+- **Do NOT** add API keys to any Python file or commit `.env`
+- **Do NOT** use `threading` — this is an async app, use `asyncio`
+- **Do NOT** add video/audio proxying to FastAPI — Stream handles all of that
+- **Do NOT** import `vision_agents` in `main.py` or `routes/` — only in `agent.py` and `asl_processor.py`
+- **Do NOT** call `client.create_token()` in the frontend — always server-side
+- **Do NOT** use `time.sleep()` — use `await asyncio.sleep()`
+- **Do NOT** hardcode call_type as anything other than `"default"` unless you know what you're doing
+- **Do NOT** push to GitHub without running `git status` to confirm `.env` is gitignored
+
+---
+
+## Frontend Integration Reference (React)
+
+The frontend developer needs these endpoints:
+
+```javascript
+// 1. Create a call and get credentials
+const { call_id, token, api_key } = await fetch('/api/calls/create', {
+  method: 'POST',
+  body: JSON.stringify({ user_id: 'user_123', user_name: 'Alice' })
+}).then(r => r.json());
+
+// 2. Join the Stream call using Stream Video React SDK
+// (frontend handles this directly — NOT through FastAPI)
+
+// 3. Tell the backend to launch the Vision Agent
+await fetch(`/api/calls/${call_id}/start-agent`, { method: 'POST',
+  body: JSON.stringify({ call_type: 'default' }) });
+
+// 4. Subscribe to live events via SSE
+const es = new EventSource(`/api/calls/${call_id}/events`);
+es.onmessage = (e) => {
+  const event = JSON.parse(e.data);
+  if (event.type === 'gesture') {
+    // Show gesture label + confidence bar
+    console.log(event.gesture, event.confidence);
+  }
+  if (event.type === 'transcript') {
+    // Add to transcript panel
+    console.log(event.sentence);
+  }
+};
+
+// 5. On session end
+await fetch(`/api/calls/${call_id}/stop-agent`, { method: 'DELETE' });
+es.close();
+```
+
+---
+
+## Useful Links
+
+- Vision Agents GitHub: https://github.com/GetStream/Vision-Agents
+- Vision Agents Docs: https://visionagents.ai
+- Golf Coach example (architecture reference): https://github.com/GetStream/Vision-Agents/tree/main/examples/02_golf_coach_example
+- Roboflow ASL models: https://universe.roboflow.com (search: ASL hand gesture)
+- Stream Dashboard: https://dashboard.getstream.io
+- FastAPI Docs: https://fastapi.tiangolo.com
+- sse-starlette: https://github.com/sysid/sse-starlette
+- Hackathon page: https://www.wemakedevs.org/hackathons/vision
