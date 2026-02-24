@@ -1,11 +1,11 @@
 """
 ASL Gesture Processor
 =====================
-A custom Vision Agents VideoProcessor that:
-  1. Receives raw video frames from the Stream WebRTC pipeline
-  2. Sends each frame to the Roboflow ASL model for inference
-  3. Deduplicates rapid repeated gestures (debounce)
-  4. Buffers gestures and forwards them to the LLM for sentence construction
+A Vision Agents VideoProcessor that:
+  1. Receives the live video track via process_video(track, participant_id, shared_forwarder)
+  2. Registers a frame handler on the shared_forwarder at the configured FPS
+  3. Sends each frame to the Roboflow ASL model for inference
+  4. Deduplicates rapid repeated gestures (debounce) via GestureBuffer
   5. Calls on_gesture() callback so FastAPI can push events via SSE
 
 Roboflow model setup:
@@ -20,21 +20,29 @@ Tuning tips:
 """
 
 import os
-import time
-from typing import Callable
+from typing import Callable, Optional
 
+import av
 from inference_sdk import InferenceHTTPClient
+from vision_agents.core.processors import VideoProcessor
+from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 from gesture_buffer import GestureBuffer
 
 
-class ASLGestureProcessor:
-    """
-    Custom VideoProcessor for real-time ASL hand gesture recognition.
+def _video_frame_to_ndarray(frame: av.VideoFrame):
+    """Convert av.VideoFrame to RGB numpy array for Roboflow infer()."""
+    if frame.format.name != "rgb24":
+        frame = frame.reformat(format="rgb24")
+    return frame.to_ndarray()
 
-    This does NOT subclass VideoProcessor directly — it follows the
-    Vision Agents processor duck-typing protocol. Subclass or adjust
-    if the SDK version you're on requires explicit inheritance.
+
+class ASLGestureProcessor(VideoProcessor):
+    """
+    VideoProcessor for real-time ASL hand gesture recognition.
+
+    Subclasses Vision Agents VideoProcessor; the SDK calls process_video()
+    when a video track is added and stop_processing() when tracks are removed.
     """
 
     def __init__(
@@ -49,7 +57,7 @@ class ASLGestureProcessor:
                  to avoid burning free tier API calls.
             confidence_threshold: Min confidence (0–1) to accept a gesture.
                                   Falls back to GESTURE_CONFIDENCE_THRESHOLD env var.
-            on_gesture: Callback invoked with (sentence_or_label, confidence)
+            on_gesture: Callback invoked with (gesture_label, confidence)
                         whenever a new gesture is confidently detected.
                         Used to push events to the SSE stream.
         """
@@ -59,11 +67,12 @@ class ASLGestureProcessor:
         )
         self.on_gesture = on_gesture
         self.buffer = GestureBuffer()
-        self._last_frame_time = 0.0
-
-        # Roboflow client — lazy initialised on first frame to avoid
-        # crashing at import time if keys aren't set yet.
         self._client: InferenceHTTPClient | None = None
+        self._shared_forwarder: Optional[VideoForwarder] = None
+
+    @property
+    def name(self) -> str:
+        return "asl_gesture_processor"
 
     def _get_client(self) -> InferenceHTTPClient:
         if self._client is None:
@@ -78,66 +87,71 @@ class ASLGestureProcessor:
             )
         return self._client
 
-    async def process(self, frame, **kwargs) -> dict | None:
+    async def process_video(
+        self,
+        track,
+        participant_id: Optional[str],
+        shared_forwarder: Optional[VideoForwarder] = None,
+    ) -> None:
         """
-        Called by Vision Agents for every incoming video frame.
-
-        Args:
-            frame: Raw video frame (numpy array or base64 bytes — SDK provides this).
-            **kwargs: Extra context from Vision Agents (ignored here).
-
-        Returns:
-            dict with gesture info if a new gesture was detected, else None.
-            The returned dict is passed to the LLM as additional context.
+        Start processing the video track. Called by the Agent when a new track is published.
+        Registers a frame handler on shared_forwarder so we receive frames at self.fps.
         """
-        # ── Rate limit: only process at our target FPS ──────────────────────
-        now = time.monotonic()
-        if now - self._last_frame_time < 1.0 / self.fps:
-            return None
-        self._last_frame_time = now
+        if shared_forwarder is None:
+            return
+        # If we were already processing another track, stop it first.
+        await self.stop_processing()
+        self._shared_forwarder = shared_forwarder
+        shared_forwarder.add_frame_handler(
+            self._on_frame,
+            fps=self.fps,
+            name="asl_roboflow",
+        )
 
-        # ── Run Roboflow inference ────────────────────────────────────────────
+    async def stop_processing(self) -> None:
+        """Remove our frame handler from the forwarder. Called when video tracks are removed."""
+        if self._shared_forwarder is not None:
+            await self._shared_forwarder.remove_frame_handler(self._on_frame)
+            self._shared_forwarder = None
+
+    async def close(self) -> None:
+        """Clean up when the application exits."""
+        await self.stop_processing()
+
+    def _on_frame(self, frame: av.VideoFrame) -> None:
+        """
+        Called by VideoForwarder at ~self.fps. Run Roboflow inference (sync, may block),
+        update buffer, and invoke on_gesture callback when a new gesture is detected.
+        """
+        try:
+            arr = _video_frame_to_ndarray(frame)
+        except Exception as e:
+            print(f"[ASLProcessor] Frame conversion error: {e}")
+            return
+
         try:
             model_id = os.getenv("ROBOFLOW_MODEL_ID", "asl-hand-gesture-recognition/1")
-            result = self._get_client().infer(frame, model_id=model_id)
+            result = self._get_client().infer(arr, model_id=model_id)
         except Exception as e:
             print(f"[ASLProcessor] Roboflow inference error: {e}")
-            return None
+            return
 
         predictions = result.get("predictions", [])
         if not predictions:
-            return None
+            return
 
-        # ── Pick highest-confidence prediction ───────────────────────────────
         top = max(predictions, key=lambda p: p["confidence"])
-
         if top["confidence"] < self.threshold:
-            return None  # Not confident enough — skip
+            return
 
         gesture = top["class"].upper()
         confidence = round(top["confidence"], 3)
 
-        # ── Debounce: ignore rapid repetition of the same gesture ────────────
         if not self.buffer.add(gesture):
-            return None  # Same gesture still held — skip duplicate
+            return
 
-        # ── Build context to inject into LLM prompt ──────────────────────────
-        context = {
-            "gesture": gesture,
-            "confidence": confidence,
-            "buffer": self.buffer.get_recent(n=10),  # last N unique gestures
-            "llm_hint": (
-                f"The user just signed [{gesture}] (confidence: {confidence:.0%}). "
-                f"Recent signs: {self.buffer.get_sentence_hint()}. "
-                f"Interpret this as part of a natural sentence and speak it aloud."
-            ),
-        }
-
-        # ── Notify FastAPI SSE stream (if callback set) ───────────────────────
         if self.on_gesture:
             try:
                 self.on_gesture(gesture, confidence)
             except Exception as e:
                 print(f"[ASLProcessor] on_gesture callback error: {e}")
-
-        return context
