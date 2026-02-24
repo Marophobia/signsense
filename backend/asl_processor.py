@@ -19,7 +19,6 @@ Tuning tips:
   - FPS 10 is a good balance between accuracy and API costs
 """
 
-import base64
 import os
 import time
 from typing import Callable

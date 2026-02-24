@@ -17,7 +17,6 @@ Flow:
 
 import asyncio
 import json
-import os
 import time
 import uuid
 from typing import AsyncGenerator
@@ -155,8 +154,7 @@ async def start_agent(
     on_gesture = make_on_gesture_callback(call_id)
 
     # Launch agent as background asyncio task
-    loop = asyncio.get_event_loop()
-    task = loop.create_task(
+    task = asyncio.create_task(
         run_agent(
             call_id=call_id,
             call_type=body.call_type,
