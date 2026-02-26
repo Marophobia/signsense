@@ -109,7 +109,7 @@ export function IndexPage() {
 
             <div className="flex items-center gap-3">
               <a
-                href="https://github.com"
+                href="https://github.com/Marophobia/signsense"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="hidden sm:flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-all"
@@ -202,7 +202,7 @@ export function IndexPage() {
                 to="/app"
                 className="touch-target group relative px-8 py-4 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-syne font-semibold text-base transition-all duration-300 flex items-center gap-2.5 hover:shadow-xl hover:shadow-primary/25 active:scale-[0.98] overflow-hidden"
               >
-                <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
+                <span className="absolute inset-0 bg-linear-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
                 <Sparkles size={18} aria-hidden="true" />
                 Launch App
                 <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" aria-hidden="true" />
@@ -325,7 +325,7 @@ export function IndexPage() {
                       </div>
                       <div className="h-1.5 rounded-full bg-secondary overflow-hidden">
                         <div
-                          className="h-full rounded-full bg-gradient-to-r from-primary to-accent shimmer"
+                          className="h-full rounded-full bg-linear-to-r from-primary to-accent shimmer"
                           style={{ width: item.width }}
                         />
                       </div>
@@ -425,7 +425,7 @@ export function IndexPage() {
                   <div className="absolute top-4 right-4 font-syne font-bold text-6xl text-primary/5 group-hover:text-primary/10 transition-colors duration-500 select-none">
                     {step}
                   </div>
-                  <div className={`absolute top-0 left-0 right-0 h-1 bg-gradient-to-r ${color} rounded-t-lg opacity-0 group-hover:opacity-100 transition-opacity duration-500`} />
+                  <div className={`absolute top-0 left-0 right-0 h-1 bg-linear-to-r ${color} rounded-t-lg opacity-0 group-hover:opacity-100 transition-opacity duration-500`} />
                   <div className="relative">
                     <div className="p-3 rounded-xl bg-primary/10 border border-primary/20 inline-block mb-6 group-hover:scale-110 transition-transform duration-300">
                       <Icon size={24} className="text-primary" aria-hidden="true" />
@@ -502,7 +502,7 @@ export function IndexPage() {
                     Live
                   </div>
                 </div>
-                <div className="aspect-video bg-gradient-to-br from-secondary to-card relative flex items-center justify-center">
+                <div className="aspect-video bg-linear-to-br from-secondary to-card relative flex items-center justify-center">
                   <div className="absolute inset-4 border-2 border-dashed border-primary/20 rounded-lg" />
                   <div className="text-center">
                     <Hand size={48} className="text-primary/30 mx-auto mb-3" aria-hidden="true" />
@@ -590,7 +590,7 @@ export function IndexPage() {
           ].map((member, idx) => (
             <ScrollReveal key={idx} delay={idx * 150}>
               <div className="gesture-card text-center p-8 group">
-                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-primary/20 to-accent/20 border border-primary/20 mx-auto mb-5 flex items-center justify-center group-hover:scale-110 group-hover:shadow-lg group-hover:shadow-primary/10 transition-all duration-300">
+                <div className="w-20 h-20 rounded-full bg-linear-to-br from-primary/20 to-accent/20 border border-primary/20 mx-auto mb-5 flex items-center justify-center group-hover:scale-110 group-hover:shadow-lg group-hover:shadow-primary/10 transition-all duration-300">
                   <span className="font-syne font-bold text-lg text-primary">{member.initials}</span>
                 </div>
                 <h4 className="font-syne font-bold text-base mb-1">{member.name}</h4>
@@ -608,7 +608,7 @@ export function IndexPage() {
           <ScrollReveal>
             <div className="border-gradient rounded-2xl">
               <div className="gesture-card text-center p-12 lg:p-16 rounded-2xl relative overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-accent/5 pointer-events-none" />
+                <div className="absolute inset-0 bg-linear-to-br from-primary/5 via-transparent to-accent/5 pointer-events-none" />
                 <div className="relative">
                   <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 mx-auto mb-8 flex items-center justify-center">
                     <Sparkles size={28} className="text-primary" aria-hidden="true" />
@@ -625,12 +625,12 @@ export function IndexPage() {
                       to="/app"
                       className="touch-target group relative px-10 py-4 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-syne font-bold text-base transition-all duration-300 flex items-center gap-2.5 hover:shadow-xl hover:shadow-primary/25 active:scale-[0.98] overflow-hidden"
                     >
-                      <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
+                      <span className="absolute inset-0 bg-linear-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
                       Launch App Now
                       <ArrowRight size={18} className="group-hover:translate-x-1.5 transition-transform" aria-hidden="true" />
                     </Link>
                     <a
-                      href="https://github.com"
+                      href="https://github.com/Marophobia/signsense"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="touch-target px-8 py-4 rounded-xl border border-border hover:border-primary/30 hover:bg-primary/5 text-foreground font-syne font-medium text-base transition-all duration-300 flex items-center gap-2.5"

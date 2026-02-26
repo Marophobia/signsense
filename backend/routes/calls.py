@@ -17,6 +17,7 @@ Flow:
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from typing import AsyncGenerator
@@ -35,6 +36,7 @@ from models import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # ─── In-memory state ──────────────────────────────────────────────────────────
 # In a real production app, use Redis. For the hackathon, this is fine.
@@ -109,6 +111,14 @@ async def create_call(body: CreateCallRequest):
 
     call_id = f"signsense-{uuid.uuid4().hex[:8]}"
 
+    logger.info(
+        "Created new call",
+        extra={
+            "call_id": call_id,
+            "user_id": body.user_id,
+        },
+    )
+
     # Generate a Stream user token for the frontend user.
     token = client.create_token(body.user_id)
 
@@ -141,6 +151,10 @@ async def start_agent(
     Note: Only one agent per call_id is allowed.
     """
     if call_id in active_agents and not active_agents[call_id].done():
+        logger.info(
+            "Agent already active on call",
+            extra={"call_id": call_id},
+        )
         return AgentStatusResponse(
             call_id=call_id,
             agent_active=True,
@@ -152,6 +166,14 @@ async def start_agent(
         event_queues[call_id] = []
 
     on_gesture = make_on_gesture_callback(call_id)
+
+    logger.info(
+        "Starting agent background task for call",
+        extra={
+            "call_id": call_id,
+            "call_type": body.call_type,
+        },
+    )
 
     # Launch agent as background asyncio task
     task = asyncio.create_task(
@@ -179,6 +201,11 @@ async def stop_agent(call_id: str):
         raise HTTPException(status_code=404, detail="No active agent for this call.")
 
     task = active_agents.pop(call_id)
+
+    logger.info(
+        "Stopping agent for call",
+        extra={"call_id": call_id},
+    )
     if not task.done():
         task.cancel()
 
@@ -231,6 +258,11 @@ async def call_events(call_id: str):
         event_queues[call_id] = []
     event_queues[call_id].append(queue)
 
+    logger.info(
+        "SSE subscriber connected",
+        extra={"call_id": call_id},
+    )
+
     async def event_generator() -> AsyncGenerator[str, None]:
         try:
             while True:
@@ -250,5 +282,10 @@ async def call_events(call_id: str):
                     event_queues[call_id].remove(queue)
                 except ValueError:
                     pass
+
+            logger.info(
+                "SSE subscriber disconnected",
+                extra={"call_id": call_id},
+            )
 
     return EventSourceResponse(event_generator())

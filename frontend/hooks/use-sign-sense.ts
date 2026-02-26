@@ -1,12 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import {
-  createCall,
-  startAgent,
-  stopAgent,
-  openEventStream,
-  type Call,
-  type EventMessage,
-} from '@/lib/api'
+import { createCall, startAgent, stopAgent, openEventStream, type Call, type EventMessage, } from '@/lib/api'
 
 export interface GestureData {
   name: string

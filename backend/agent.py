@@ -18,6 +18,7 @@ Architecture reminder:
 """
 
 import asyncio
+import logging
 from typing import Callable
 
 from dotenv import load_dotenv
@@ -28,6 +29,8 @@ from asl_processor import ASLGestureProcessor
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 # The agent user that joins the call on the backend side.
 AGENT_USER = User(
     name="SignSense AI",
@@ -37,6 +40,7 @@ AGENT_USER = User(
 
 
 async def create_agent(
+    call_id: str,
     on_transcript: Callable[[str, float], None] | None = None,
 ) -> Agent:
     """
@@ -50,6 +54,7 @@ async def create_agent(
     processor = ASLGestureProcessor(
         fps=10,
         on_gesture=on_transcript,  # forwarded to SSE
+        call_id=call_id,
     )
 
     return Agent(
@@ -77,17 +82,28 @@ async def run_agent(call_id: str, call_type: str = "default", on_transcript=None
         call_type:  Stream call type (default: "default"). Usually safe to leave as-is.
         on_transcript: Forwarded to create_agent() for SSE event emission.
     """
-    agent = await create_agent(on_transcript=on_transcript)
+    agent = await create_agent(call_id=call_id, on_transcript=on_transcript)
 
     try:
+        # Ensure the agent user exists in Stream Video so created_by_id is set correctly
+        await agent.create_user()
         call = await agent.create_call(call_type, call_id)
         async with agent.join(call):
-            print(f"[SignSense Agent] Joined call: {call_id}")
+            logger.info(
+                "SignSense Agent joined call",
+                extra={"call_id": call_id, "call_type": call_type},
+            )
             # Keep the agent alive until the call ends.
             # Vision Agents handles the event loop internally.
             await asyncio.sleep(3600)  # 1hr max session — adjust as needed
     except asyncio.CancelledError:
-        print(f"[SignSense Agent] Call {call_id} cancelled / ended.")
+        logger.info(
+            "SignSense Agent call cancelled / ended",
+            extra={"call_id": call_id},
+        )
     except Exception as e:
-        print(f"[SignSense Agent] Error in call {call_id}: {e}")
+        logger.exception(
+            "Error in SignSense Agent call",
+            extra={"call_id": call_id},
+        )
         raise

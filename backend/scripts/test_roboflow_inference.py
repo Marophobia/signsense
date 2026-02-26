@@ -26,16 +26,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from config import settings
 from inference_sdk import InferenceHTTPClient
 
 
 def main() -> int:
-    api_key = os.getenv("ROBOFLOW_API_KEY")
+    api_key = settings.ROBOFLOW_API_KEY
     if not api_key:
         print("ROBOFLOW_API_KEY is not set. Set it in .env or the environment.", file=sys.stderr)
         return 1
 
-    model_id = os.getenv("ROBOFLOW_MODEL_ID", "asl-hand-gesture-recognition/1")
+    model_id = settings.ROBOFLOW_MODEL_ID
 
     if len(sys.argv) >= 2:
         image_path = Path(sys.argv[1])
@@ -43,7 +44,7 @@ def main() -> int:
         # Optional default fixture path
         image_path = backend_dir / "tests" / "fixtures" / "sample_asl_frame.jpg"
         if not image_path.exists():
-            image_path = backend_dir / "assets" / "sample_asl_frame.jpg"
+            image_path = backend_dir / "public" / "images" / "a-ASL.jpg"
         if not image_path.exists():
             print(
                 "No image path given and no default fixture found.",
