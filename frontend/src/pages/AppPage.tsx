@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { StreamVideo, StreamCall, ParticipantsAudio, useCallStateHooks } from '@stream-io/video-react-sdk'
 import { SignSenseLogo } from '@/components/sign-sense-logo'
 import { VideoPanel } from '@/components/video-panel'
 import { GestureDisplay } from '@/components/gesture-display'
@@ -10,14 +11,28 @@ import { useSignSense } from '@/hooks/use-sign-sense'
 import { ArrowLeft, AlertCircle } from 'lucide-react'
 import { useState } from 'react'
 
+/**
+ * Renders hidden <audio> elements for all remote participants (the SignSense agent).
+ * Must be rendered inside a <StreamCall> context so the hook works.
+ * Without this, the agent's ElevenLabs TTS audio is never played.
+ */
+function AgentAudio() {
+  const { useRemoteParticipants } = useCallStateHooks()
+  const remoteParticipants = useRemoteParticipants()
+  return <ParticipantsAudio participants={remoteParticipants} />
+}
+
 export function AppPage() {
   const {
     isActive,
     currentGesture,
+    gestureHistory,
     transcriptHistory,
     pipelineStatus,
     error,
     isLoading,
+    streamClient,
+    streamCall,
     startSession,
     stopSession,
     clearTranscript,
@@ -25,15 +40,7 @@ export function AppPage() {
 
   const [dismissError, setDismissError] = useState(false)
 
-  const gestures = transcriptHistory
-    .filter((entry) => !entry.isPartial)
-    .map((entry) => ({
-      name: entry.text.split(' ')[0] ?? 'Unknown',
-      confidence: 0.8 + Math.random() * 0.2,
-      timestamp: entry.timestamp,
-    }))
-
-  return (
+  const pageContent = (
     <div className="flex flex-col h-screen bg-background overflow-hidden">
       {/* Header */}
       <header className="border-b border-border/50 glass sticky top-0 z-40">
@@ -97,7 +104,7 @@ export function AppPage() {
               <TranscriptPanel transcriptHistory={transcriptHistory} onClear={clearTranscript} />
             </div>
             <div className="min-h-[140px]">
-              <GestureLog gestures={gestures} />
+              <GestureLog gestures={gestureHistory} />
             </div>
             <div className="min-h-[140px]">
               <PipelineStatusComponent status={pipelineStatus} />
@@ -121,4 +128,22 @@ export function AppPage() {
       </footer>
     </div>
   )
+
+  // When a Stream session is active, wrap with SDK providers so:
+  //   1. <ParticipantsAudio> can render hidden <audio> elements for the agent's TTS output
+  //   2. Any child component can use Stream React hooks if needed
+  if (streamClient && streamCall) {
+    return (
+      <StreamVideo client={streamClient}>
+        <StreamCall call={streamCall}>
+          {/* AgentAudio mounts hidden <audio> elements for remote participants.
+              Without this, the agent's ElevenLabs TTS audio will never be heard. */}
+          <AgentAudio />
+          {pageContent}
+        </StreamCall>
+      </StreamVideo>
+    )
+  }
+
+  return pageContent
 }

@@ -29,6 +29,15 @@ export const PipelineStatusComponent: FC<PipelineStatusProps> = ({ status, class
     { key: 'transcript' as const, label: 'Transcript', icon: iconMap.transcript },
   ]
 
+  const hasError = Object.values(status).some((v) => v === 'error')
+  const isActive = status.camera === 'connected'
+
+  const footerText = hasError
+    ? 'One or more systems have errors'
+    : isActive
+      ? 'Session active — monitoring pipeline'
+      : 'Awaiting session start'
+
   return (
     <div className={`glass p-4 rounded-lg ${className}`}>
       <h3 className="font-syne font-semibold text-sm mb-4">Pipeline Status</h3>
@@ -55,8 +64,8 @@ export const PipelineStatusComponent: FC<PipelineStatusProps> = ({ status, class
         })}
       </div>
 
-      <div className="mt-4 text-xs text-muted-foreground text-center py-2 border-t border-border/50">
-        All systems operational
+      <div className={`mt-4 text-xs text-center py-2 border-t border-border/50 ${hasError ? 'text-destructive' : 'text-muted-foreground'}`}>
+        {footerText}
       </div>
     </div>
   )

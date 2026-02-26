@@ -549,10 +549,10 @@ export function IndexPage() {
             {[
               { name: 'Python', desc: 'Backend' },
               { name: 'FastAPI', desc: 'API Layer' },
-              { name: 'MediaPipe', desc: 'Hand Tracking' },
-              { name: 'TensorFlow', desc: 'ML Models' },
-              { name: 'React', desc: 'Frontend' },
-              { name: 'Stream.io', desc: 'Video' },
+              { name: 'Roboflow', desc: 'Gesture AI' },
+              { name: 'Gemini', desc: 'LLM Engine' },
+              { name: 'ElevenLabs', desc: 'Voice Synthesis' },
+              { name: 'Stream.io', desc: 'Live Video' },
             ].map((tech, idx) => (
               <ScrollReveal key={tech.name} delay={idx * 100}>
                 <div className="gesture-card text-center p-6 group">

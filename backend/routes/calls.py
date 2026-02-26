@@ -22,7 +22,8 @@ import time
 import uuid
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, HTTPException
+from google import genai
 from sse_starlette.sse import EventSourceResponse
 from stream_chat import StreamChat
 
@@ -41,8 +42,14 @@ logger = logging.getLogger(__name__)
 # ─── In-memory state ──────────────────────────────────────────────────────────
 # In a real production app, use Redis. For the hackathon, this is fine.
 
-# active_agents: call_id → asyncio.Task
+# active_agents: call_id → asyncio.Task (the Vision Agent task)
 active_agents: dict[str, asyncio.Task] = {}
+
+# transcript_tasks: call_id → asyncio.Task (the transcript processor task)
+transcript_tasks: dict[str, asyncio.Task] = {}
+
+# gesture_input_queues: call_id → asyncio.Queue feeding the transcript processor
+gesture_input_queues: dict[str, asyncio.Queue] = {}
 
 # event_queues: call_id → list of asyncio.Queue (one per SSE subscriber)
 event_queues: dict[str, list[asyncio.Queue]] = {}
@@ -63,26 +70,116 @@ def get_stream_client() -> StreamChat:
     )
 
 
+def _push_event(call_id: str, event: dict) -> None:
+    """Push an event dict to all SSE subscribers for a call."""
+    for queue in event_queues.get(call_id, []):
+        try:
+            queue.put_nowait(event)
+        except asyncio.QueueFull:
+            pass  # Drop if subscriber is too slow
+
+
 def make_on_gesture_callback(call_id: str):
     """
-    Returns a callback that pushes gesture + transcript events into the SSE queues
-    for a specific call_id. Passed to run_agent() → ASLGestureProcessor.
+    Returns a callback that:
+      1. Pushes raw gesture events to all SSE subscribers immediately.
+      2. Feeds accepted gestures (non-[UNCLEAR]) into the gesture_input_queue
+         so the transcript processor can batch them and call Gemini.
     """
     def callback(gesture_or_sentence: str, confidence: float):
         if call_id not in event_queues:
             return
-        event = {
+
+        _push_event(call_id, {
             "type": "gesture",
             "gesture": gesture_or_sentence,
             "confidence": confidence,
             "timestamp": time.time(),
-        }
-        for queue in event_queues[call_id]:
-            try:
-                queue.put_nowait(event)
-            except asyncio.QueueFull:
-                pass  # Drop if subscriber is too slow
+        })
+
+        # Feed non-unclear gestures to the transcript processor
+        if gesture_or_sentence != "[UNCLEAR]":
+            q = gesture_input_queues.get(call_id)
+            if q:
+                try:
+                    q.put_nowait(gesture_or_sentence)
+                except asyncio.QueueFull:
+                    pass
+
     return callback
+
+
+async def _interpret_and_emit(call_id: str, gestures: list[str]) -> None:
+    """
+    Call Gemini to translate a buffered gesture sequence into an English sentence
+    and emit it as a 'transcript' SSE event.
+    """
+    if not settings.GOOGLE_API_KEY:
+        logger.warning("GOOGLE_API_KEY not set; skipping transcript generation")
+        return
+
+    sequence = " ".join(gestures)
+    prompt = (
+        "You are a real-time ASL interpreter giving voice to a deaf user.\n"
+        "Translate the following sequence of detected ASL signs into a single, natural English sentence.\n\n"
+        f"Signs: {sequence}\n\n"
+        "Rules:\n"
+        "- Respond with ONLY the English sentence — no explanation, no preamble.\n"
+        "- Apply ASL grammar: topic-comment structure, add articles/copulas as needed.\n"
+        "- If only individual letters, treat as fingerspelling and form the word.\n"
+        "- Speak in first person when the user signs about themselves."
+    )
+
+    try:
+        client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+        response = await asyncio.to_thread(
+            lambda: client.models.generate_content(
+                model="gemini-2.0-flash-lite",
+                contents=prompt,
+            )
+        )
+        sentence = (response.text or "").strip()
+        if not sentence:
+            return
+
+        logger.info(
+            "Transcript generated",
+            extra={"call_id": call_id, "sequence": sequence, "sentence": sentence},
+        )
+        _push_event(call_id, {
+            "type": "transcript",
+            "sentence": sentence,
+            "timestamp": time.time(),
+        })
+    except Exception:
+        logger.exception(
+            "Gemini transcript generation failed",
+            extra={"call_id": call_id, "sequence": sequence},
+        )
+
+
+async def _transcript_processor(call_id: str, gesture_queue: asyncio.Queue) -> None:
+    """
+    Background asyncio task that accumulates gesture labels from gesture_queue,
+    and after a silence window (no new gestures for ~2.5s) calls Gemini to
+    interpret the sequence and emit a 'transcript' SSE event.
+    """
+    gestures: list[str] = []
+
+    try:
+        while True:
+            try:
+                gesture = await asyncio.wait_for(gesture_queue.get(), timeout=2.5)
+                gestures.append(gesture)
+            except asyncio.TimeoutError:
+                # Silence window elapsed — interpret accumulated gestures
+                if gestures:
+                    await _interpret_and_emit(call_id, list(gestures))
+                    gestures = []
+    except asyncio.CancelledError:
+        # Task cancelled (stop_agent called) — interpret any remaining gestures
+        if gestures:
+            await _interpret_and_emit(call_id, list(gestures))
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
@@ -134,7 +231,6 @@ async def create_call(body: CreateCallRequest):
 async def start_agent(
     call_id: str,
     body: StartAgentRequest,
-    background_tasks: BackgroundTasks,
 ):
     """
     Launch the Vision Agent as a background task to join an existing call.
@@ -165,6 +261,10 @@ async def start_agent(
     if call_id not in event_queues:
         event_queues[call_id] = []
 
+    # Set up gesture input queue for the transcript processor
+    gesture_q: asyncio.Queue = asyncio.Queue(maxsize=200)
+    gesture_input_queues[call_id] = gesture_q
+
     on_gesture = make_on_gesture_callback(call_id)
 
     logger.info(
@@ -175,15 +275,21 @@ async def start_agent(
         },
     )
 
-    # Launch agent as background asyncio task
-    task = asyncio.create_task(
+    # Launch Vision Agent as background asyncio task
+    agent_task = asyncio.create_task(
         run_agent(
             call_id=call_id,
             call_type=body.call_type,
             on_transcript=on_gesture,
         )
     )
-    active_agents[call_id] = task
+    active_agents[call_id] = agent_task
+
+    # Launch transcript processor as a separate background task
+    transcript_task = asyncio.create_task(
+        _transcript_processor(call_id, gesture_q)
+    )
+    transcript_tasks[call_id] = transcript_task
 
     return AgentStatusResponse(
         call_id=call_id,
@@ -200,16 +306,22 @@ async def stop_agent(call_id: str):
     if call_id not in active_agents:
         raise HTTPException(status_code=404, detail="No active agent for this call.")
 
-    task = active_agents.pop(call_id)
+    agent_task = active_agents.pop(call_id)
 
     logger.info(
         "Stopping agent for call",
         extra={"call_id": call_id},
     )
-    if not task.done():
-        task.cancel()
+    if not agent_task.done():
+        agent_task.cancel()
 
-    # Clean up event queues
+    # Cancel the transcript processor task
+    transcript_task = transcript_tasks.pop(call_id, None)
+    if transcript_task and not transcript_task.done():
+        transcript_task.cancel()
+
+    # Clean up per-call queues
+    gesture_input_queues.pop(call_id, None)
     event_queues.pop(call_id, None)
 
     return AgentStatusResponse(
