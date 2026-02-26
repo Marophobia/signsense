@@ -22,6 +22,7 @@ load_dotenv()
 
 from config import settings
 from routes.calls import router as calls_router
+from routes.debug import router as debug_router
 
 
 @asynccontextmanager
@@ -51,7 +52,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         settings.FRONTEND_URL,
-        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+        "localhost:5173",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -60,6 +62,7 @@ app.add_middleware(
 
 # ─── Routers ──────────────────────────────────────────────────────────────────
 app.include_router(calls_router, prefix="/api/calls", tags=["calls"])
+app.include_router(debug_router, prefix="/api/debug", tags=["debug"])
 
 
 @app.get("/health")

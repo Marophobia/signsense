@@ -21,7 +21,7 @@ class Settings:
     ROBOFLOW_MODEL_ID: str = os.getenv("ROBOFLOW_MODEL_ID", "asl-hand-gesture-recognition/1")
 
     # App
-    FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:5173")
     GESTURE_CONFIDENCE_THRESHOLD: float = float(
         os.getenv("GESTURE_CONFIDENCE_THRESHOLD", "0.65")
     )
@@ -33,6 +33,7 @@ class Settings:
             "STREAM_API_SECRET",
             "GOOGLE_API_KEY",
             "ROBOFLOW_API_KEY",
+            "ELEVENLABS_API_KEY",
         ]
         return [k for k in required if not getattr(self, k)]
 

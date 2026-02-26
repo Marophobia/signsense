@@ -19,6 +19,7 @@ Tuning tips:
   - FPS 10 is a good balance between accuracy and API costs
 """
 
+import logging
 import os
 from typing import Callable, Optional
 
@@ -27,7 +28,11 @@ from inference_sdk import InferenceHTTPClient
 from vision_agents.core.processors import VideoProcessor
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 
+from config import settings
 from gesture_buffer import GestureBuffer
+
+
+logger = logging.getLogger(__name__)
 
 
 def _video_frame_to_ndarray(frame: av.VideoFrame):
@@ -50,23 +55,29 @@ class ASLGestureProcessor(VideoProcessor):
         fps: int = 10,
         confidence_threshold: float | None = None,
         on_gesture: Callable[[str, float], None] | None = None,
+        call_id: str | None = None,
     ):
         """
         Args:
             fps: How many frames per second to send to Roboflow. Keep ≤10
                  to avoid burning free tier API calls.
             confidence_threshold: Min confidence (0–1) to accept a gesture.
-                                  Falls back to GESTURE_CONFIDENCE_THRESHOLD env var.
+                                  Falls back to settings.GESTURE_CONFIDENCE_THRESHOLD.
             on_gesture: Callback invoked with (gesture_label, confidence)
                         whenever a new gesture is confidently detected.
                         Used to push events to the SSE stream.
+            call_id: Optional Stream call ID, used only for logging/observability.
         """
         self.fps = fps
-        self.threshold = confidence_threshold or float(
-            os.getenv("GESTURE_CONFIDENCE_THRESHOLD", "0.65")
+        # Single source of truth for gesture threshold: config.settings
+        self.threshold = (
+            confidence_threshold
+            if confidence_threshold is not None
+            else settings.GESTURE_CONFIDENCE_THRESHOLD
         )
         self.on_gesture = on_gesture
         self.buffer = GestureBuffer()
+        self.call_id = call_id
         self._client: InferenceHTTPClient | None = None
         self._shared_forwarder: Optional[VideoForwarder] = None
 
@@ -76,7 +87,7 @@ class ASLGestureProcessor(VideoProcessor):
 
     def _get_client(self) -> InferenceHTTPClient:
         if self._client is None:
-            api_key = os.getenv("ROBOFLOW_API_KEY")
+            api_key = settings.ROBOFLOW_API_KEY
             if not api_key:
                 raise EnvironmentError(
                     "ROBOFLOW_API_KEY is not set. Check your .env file."
@@ -122,36 +133,92 @@ class ASLGestureProcessor(VideoProcessor):
         """
         Called by VideoForwarder at ~self.fps. Run Roboflow inference (sync, may block),
         update buffer, and invoke on_gesture callback when a new gesture is detected.
+
+        Contract:
+          - Only when GestureBuffer.add(gesture) returns True do we emit a high-confidence
+            gesture event via on_gesture.
+          - Gestures below the configured confidence threshold are not added to the buffer.
+            Instead, a special "[UNCLEAR]" event may be emitted so the UI can react.
         """
         try:
             arr = _video_frame_to_ndarray(frame)
         except Exception as e:
-            print(f"[ASLProcessor] Frame conversion error: {e}")
+            logger.exception("Frame conversion error in ASLGestureProcessor", exc_info=e)
             return
 
         try:
-            model_id = os.getenv("ROBOFLOW_MODEL_ID", "asl-hand-gesture-recognition/1")
+            # Use a single, centralized model ID from config.settings
+            model_id = settings.ROBOFLOW_MODEL_ID
             result = self._get_client().infer(arr, model_id=model_id)
         except Exception as e:
-            print(f"[ASLProcessor] Roboflow inference error: {e}")
+            logger.exception(
+                "Roboflow inference error in ASLGestureProcessor",
+                exc_info=e,
+            )
             return
 
         predictions = result.get("predictions", [])
         if not predictions:
+            logger.debug(
+                "No Roboflow predictions for frame",
+                extra={"call_id": self.call_id},
+            )
             return
 
         top = max(predictions, key=lambda p: p["confidence"])
-        if top["confidence"] < self.threshold:
+        raw_conf = float(top.get("confidence", 0.0) or 0.0)
+        confidence = round(raw_conf, 3)
+        gesture = str(top.get("class", "")).upper() or "[UNKNOWN]"
+
+        # Low-confidence behavior: do NOT add to buffer, optionally emit "[UNCLEAR]" so
+        # the frontend can show a gentle notice and avoid sending it to the LLM.
+        if raw_conf < self.threshold:
+            logger.info(
+                "Gesture below confidence threshold; treating as unclear",
+                extra={
+                    "call_id": self.call_id,
+                    "gesture": gesture,
+                    "confidence": confidence,
+                    "threshold": self.threshold,
+                },
+            )
+            if self.on_gesture:
+                try:
+                    self.on_gesture("[UNCLEAR]", confidence)
+                except Exception as e:
+                    logger.exception(
+                        "on_gesture callback error for [UNCLEAR] event",
+                        exc_info=e,
+                    )
             return
 
-        gesture = top["class"].upper()
-        confidence = round(top["confidence"], 3)
-
-        if not self.buffer.add(gesture):
+        # High-confidence gesture: use GestureBuffer as the single gatekeeper
+        accepted = self.buffer.add(gesture)
+        if not accepted:
+            logger.debug(
+                "Gesture rejected by buffer (debounced or within silence window)",
+                extra={
+                    "call_id": self.call_id,
+                    "gesture": gesture,
+                    "confidence": confidence,
+                },
+            )
             return
+
+        logger.info(
+            "Gesture accepted by buffer",
+            extra={
+                "call_id": self.call_id,
+                "gesture": gesture,
+                "confidence": confidence,
+            },
+        )
 
         if self.on_gesture:
             try:
                 self.on_gesture(gesture, confidence)
             except Exception as e:
-                print(f"[ASLProcessor] on_gesture callback error: {e}")
+                logger.exception(
+                    "on_gesture callback error for gesture event",
+                    exc_info=e,
+                )
