@@ -1,13 +1,13 @@
-## SignSense Backend Dev Notes
+# SignSense Backend Dev Notes
 
-### How to run the backend
+## How to run the backend
 
 - **Start FastAPI server** (from `backend/`):
   - `uvicorn main:app --host 0.0.0.0 --port 8000 --reload`
 - **Health check**:
   - `GET /health` → `{"status": "ok", "service": "SignSense AI"}`
 
-### Roboflow model debugging
+## Roboflow model debugging
 
 - **Required env vars** (set in `.env`):
   - `ROBOFLOW_API_KEY`
@@ -26,7 +26,7 @@
   - Response:
     - `{ "model_id": "<id>", "predictions": [...] }`
 
-### Live call flow & events
+## Live call flow & events
 
 - **Create a call**:
   - `POST /api/calls/create`
@@ -47,7 +47,7 @@
     - Keepalive ping:
       - `{ "type": "ping" }`
 
-### Gesture buffering & thresholds
+## Gesture buffering & thresholds
 
 - **Single source of truth**:
   - `config.settings.GESTURE_CONFIDENCE_THRESHOLD` controls what “high enough confidence” means.
@@ -61,4 +61,3 @@
     - Returns `False` → debounced / ignored; no SSE event.
   - `silence_timeout`:
     - After a pause, the buffer auto-resets and starts a new “sentence” of gestures.
-

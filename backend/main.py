@@ -11,6 +11,16 @@ the frontend calls start-agent. To run the backend: `python main.py` or
 `uvicorn main:app --host 0.0.0.0 --port 8000`.
 """
 
+# Force aiohttp to use system DNS (ThreadedResolver) so the GetStream SDK can reach
+# the SFU when aiodns fails with "Could not contact DNS servers" on some networks.
+# Must run before any module that uses aiohttp (e.g. getstream) is imported.
+# Patch both resolver and connector: connector does "from .resolver import DefaultResolver"
+# at load time, so if connector was ever imported first, it would still use AsyncResolver.
+import aiohttp.resolver
+import aiohttp.connector
+aiohttp.resolver.DefaultResolver = aiohttp.resolver.ThreadedResolver
+aiohttp.connector.DefaultResolver = aiohttp.resolver.ThreadedResolver
+
 from contextlib import asynccontextmanager
 
 import uvicorn
