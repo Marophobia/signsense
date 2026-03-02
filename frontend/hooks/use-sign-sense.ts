@@ -1,11 +1,12 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { StreamVideoClient, type Call as StreamCall } from '@stream-io/video-react-sdk'
-import { createCall, startAgent, stopAgent, openEventStream, type Call, type EventMessage } from '@/lib/api'
+import { createCall, startAgent, stopAgent, openEventStream, type Call, type EventMessage, type GestureBBox } from '@/lib/api'
 
 export interface GestureData {
   name: string
   confidence: number
   timestamp: number
+  bbox?: GestureBBox
 }
 
 export interface PipelineStatus {
@@ -79,11 +80,12 @@ export const useSignSense = (): UseSignSenseReturn => {
         const gesture = message.gesture ?? (message.data as { name?: string })?.name ?? 'Unknown'
         const confidence = message.confidence ?? (message.data as { confidence?: number })?.confidence ?? 0
         const timestamp = message.timestamp ?? Date.now()
+        const bbox = message.bbox as GestureBBox | undefined
 
         // Silently drop [UNCLEAR] — don't pollute the display
         if (gesture === '[UNCLEAR]') break
 
-        const gestureData: GestureData = { name: gesture, confidence, timestamp }
+        const gestureData: GestureData = { name: gesture, confidence, timestamp, bbox }
         setCurrentGesture(gestureData)
         setGestureHistory((prev) => [...prev.slice(-(MAX_GESTURE_HISTORY - 1)), gestureData])
 

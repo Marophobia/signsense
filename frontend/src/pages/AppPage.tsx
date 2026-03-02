@@ -91,7 +91,7 @@ export function AppPage() {
           {/* Video Panel - Full width on mobile, left 2/3 on desktop */}
           <div className="lg:col-span-2 flex flex-col gap-6 min-h-0">
             <div className="flex-1 min-h-[300px] sm:min-h-[400px] lg:min-h-0">
-              <VideoPanel isActive={isActive} />
+              <VideoPanel isActive={isActive} gesture={currentGesture} />
             </div>
             <div className="min-h-[120px]">
               <GestureDisplay gesture={currentGesture} />

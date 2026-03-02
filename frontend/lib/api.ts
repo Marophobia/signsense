@@ -9,12 +9,20 @@ export interface Call {
   api_key: string
 }
 
+export interface GestureBBox {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export interface EventMessage {
   type: string
   gesture?: string
   confidence?: number
   sentence?: string
   timestamp?: number
+  bbox?: GestureBBox
   data?: unknown
 }
 

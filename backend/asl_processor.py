@@ -54,7 +54,7 @@ class ASLGestureProcessor(VideoProcessor):
         self,
         fps: int = 10,
         confidence_threshold: float | None = None,
-        on_gesture: Callable[[str, float], None] | None = None,
+        on_gesture: Callable[[str, float, dict | None], None] | None = None,
         call_id: str | None = None,
     ):
         """
@@ -184,13 +184,39 @@ class ASLGestureProcessor(VideoProcessor):
             )
             if self.on_gesture:
                 try:
-                    self.on_gesture("[UNCLEAR]", confidence)
+                    # Low-confidence frames do not include a bbox; frontend treats these
+                    # as soft \"no gesture\" notices.
+                    self.on_gesture("[UNCLEAR]", confidence, None)
                 except Exception as e:
                     logger.exception(
                         "on_gesture callback error for [UNCLEAR] event",
                         exc_info=e,
                     )
             return
+
+        # Derive normalized bounding box if Roboflow returned geometry
+        bbox: dict | None = None
+        try:
+            h, w = arr.shape[:2]
+            cx = float(top.get("x", 0.0) or 0.0)
+            cy = float(top.get("y", 0.0) or 0.0)
+            bw = float(top.get("width", 0.0) or 0.0)
+            bh = float(top.get("height", 0.0) or 0.0)
+            if w > 0 and h > 0 and bw > 0 and bh > 0:
+                # Convert center-based pixel bbox to [0,1] coords relative to frame
+                x0 = (cx - bw / 2.0) / w
+                y0 = (cy - bh / 2.0) / h
+                bbox = {
+                    "x": max(0.0, min(1.0, x0)),
+                    "y": max(0.0, min(1.0, y0)),
+                    "width": max(0.0, min(1.0, bw / w)),
+                    "height": max(0.0, min(1.0, bh / h)),
+                }
+        except Exception:
+            logger.debug(
+                "Failed to compute bbox from Roboflow prediction",
+                extra={"call_id": self.call_id},
+            )
 
         # High-confidence gesture: use GestureBuffer as the single gatekeeper
         accepted = self.buffer.add(gesture)
@@ -211,12 +237,13 @@ class ASLGestureProcessor(VideoProcessor):
                 "call_id": self.call_id,
                 "gesture": gesture,
                 "confidence": confidence,
+                "bbox": bbox,
             },
         )
 
         if self.on_gesture:
             try:
-                self.on_gesture(gesture, confidence)
+                self.on_gesture(gesture, confidence, bbox)
             except Exception as e:
                 logger.exception(
                     "on_gesture callback error for gesture event",

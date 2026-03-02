@@ -1,5 +1,6 @@
 import { type FC, useState, useEffect, useRef } from 'react'
 import { Video, VideoOff } from 'lucide-react'
+import { type GestureData } from '@/hooks/use-sign-sense'
 
 function VideoPlaceholder() {
   return (
@@ -23,10 +24,11 @@ function CameraErrorPlaceholder({ error }: { error: string }) {
 
 interface VideoPanelProps {
   isActive: boolean
+  gesture?: GestureData | null
   className?: string
 }
 
-export const VideoPanel: FC<VideoPanelProps> = ({ isActive, className = '' }) => {
+export const VideoPanel: FC<VideoPanelProps> = ({ isActive, gesture, className = '' }) => {
   const [mounted, setMounted] = useState(false)
   const [stream, setStream] = useState<MediaStream | null>(null)
   const [cameraError, setCameraError] = useState<string | null>(null)
@@ -100,6 +102,24 @@ export const VideoPanel: FC<VideoPanelProps> = ({ isActive, className = '' }) =>
               className="w-full h-full object-cover"
               aria-label="Your camera feed for sign language"
             />
+
+            {/* Gesture bounding box overlay (if backend provided one) */}
+            {gesture?.bbox && (
+              <div
+                className="absolute border-2 border-accent bg-accent/10 pointer-events-none transition-all duration-150"
+                style={{
+                  left: `${gesture.bbox.x * 100}%`,
+                  top: `${gesture.bbox.y * 100}%`,
+                  width: `${gesture.bbox.width * 100}%`,
+                  height: `${gesture.bbox.height * 100}%`,
+                }}
+              >
+                <div className="absolute -top-6 left-0 px-2 py-0.5 rounded bg-black/70 text-[10px] text-white">
+                  {gesture.name} {(gesture.confidence * 100).toFixed(0)}%
+                </div>
+              </div>
+            )}
+
             {!isActive && (
               <div className="absolute bottom-4 left-4 right-4 px-4 py-2 rounded-lg bg-black/60 backdrop-blur-sm border border-border/50 text-center pointer-events-none z-10">
                 <p className="text-muted-foreground text-sm">Position yourself, then click Start Session</p>

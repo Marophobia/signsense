@@ -41,7 +41,7 @@ AGENT_USER = User(
 
 async def create_agent(
     call_id: str,
-    on_transcript: Callable[[str, float], None] | None = None,
+    on_transcript: Callable[[str, float, dict | None], None] | None = None,
 ) -> Agent:
     """
     Build and return the configured SignSense Agent.

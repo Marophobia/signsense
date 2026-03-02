@@ -86,16 +86,20 @@ def make_on_gesture_callback(call_id: str):
       2. Feeds accepted gestures (non-[UNCLEAR]) into the gesture_input_queue
          so the transcript processor can batch them and call Gemini.
     """
-    def callback(gesture_or_sentence: str, confidence: float):
+    def callback(gesture_or_sentence: str, confidence: float, bbox: dict | None = None):
         if call_id not in event_queues:
             return
 
-        _push_event(call_id, {
+        event: dict = {
             "type": "gesture",
             "gesture": gesture_or_sentence,
             "confidence": confidence,
             "timestamp": time.time(),
-        })
+        }
+        if bbox is not None:
+            event["bbox"] = bbox
+
+        _push_event(call_id, event)
 
         # Feed non-unclear gestures to the transcript processor
         if gesture_or_sentence != "[UNCLEAR]":
